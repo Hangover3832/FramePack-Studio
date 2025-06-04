@@ -61,6 +61,7 @@ class Job:
     latent_type: Optional[str] = None
     thumbnail: Optional[str] = None
     generation_type: Optional[str] = None # Added generation_type
+    last_frame_image: Optional[str] = None
 
     def __post_init__(self):
         # Store generation type

@@ -405,6 +405,38 @@ def create_interface(
                             end_button = gr.Button(value="Cancel Current Job", interactive=True)
                             start_button = gr.Button(value="Add to Queue", elem_id="toolbar-add-to-queue-btn")
 
+                        last_frame_image = gr.Image(
+                            label="Last frame", 
+                            height=256, 
+                            visible=True, 
+                            type="pil", 
+                            interactive=False,
+                            elem_classes="contain-image",
+                            image_mode="RGB"
+                        )
+
+                        def use_as_input_click(img):
+                            return img
+
+                        def use_for_loop_click(img1, img2):
+                            return (img1, img2)
+
+                        with gr.Row():
+                            use_as_input = gr.Button("Use as input image")
+                            use_as_input.click(
+                                fn=use_as_input_click,
+                                inputs=last_frame_image,
+                                outputs=input_image
+                            )
+
+                            use_for_loop = gr.Button("Use for video loop")
+                            use_for_loop.click(
+                               fn=use_for_loop_click,
+                               inputs=[input_image, last_frame_image],
+                               outputs=[end_frame_image_original, input_image]
+                            )
+
+
             with gr.Tab("Queue"):
                 with gr.Row():
                     with gr.Column():
@@ -723,7 +755,7 @@ def create_interface(
         current_job_id.change(
             fn=monitor_fn,
             inputs=[current_job_id],
-            outputs=[result_video, current_job_id, preview_image, progress_desc, progress_bar, start_button, end_button]
+            outputs=[result_video, current_job_id, preview_image, progress_desc, progress_bar, start_button, end_button, last_frame_image]
         )
 
         cleanup_btn.click(

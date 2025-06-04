@@ -31,6 +31,7 @@ from diffusers_helper.clip_vision import hf_clip_vision_encode
 from diffusers_helper.bucket_tools import find_nearest_bucket
 from diffusers_helper import lora_utils
 from diffusers_helper.lora_utils import load_lora, unload_all_loras
+from torchvision.utils import save_image
 
 # Import model generators
 from modules.generators import create_model_generator
@@ -937,12 +938,22 @@ def worker(
             if not high_vram:
                 unload_complete_models()
 
-            output_filename = os.path.join(output_dir, f'{job_id}_{total_generated_latent_frames}.mp4')
+            out_filename = os.path.join(output_dir, f'{job_id}_{total_generated_latent_frames}')
+            output_filename = f'{out_filename}.mp4'
             save_bcthw_as_mp4(history_pixels, output_filename, fps=30, crf=settings.get("mp4_crf"))
             print(f'Decoded. Current latent shape {real_history_latents.shape}; pixel shape {history_pixels.shape}')
             stream_to_use.output_queue.push(('file', output_filename))
 
             if is_last_section:
+                last_image_file_name = f'{out_filename}.png'
+                last_frame = history_pixels.movedim(1,2)[0,-1] # to shape [c, h, w] range [-1.0,1.0]
+                last_frame = torch.clamp(last_frame.float(), -1., 1.) * 0.5 + 0.5 # convert and clamp to range [0.0,1.0]
+                with job_queue.lock:
+                    if job_queue.current_job:
+                        job_queue.current_job.last_frame_image = last_image_file_name
+                save_image(last_frame, last_image_file_name, 'PNG')
+                print(f'Saved last frame as "{last_image_file_name}"')
+                gr.update()
                 break
 
             section_idx += 1  # PROMPT BLENDING: increment section index
@@ -1275,7 +1286,7 @@ def monitor_job(job_id):
     Monitor a specific job and update the UI with the latest video segment as soon as it's available.
     """
     if not job_id:
-        yield None, None, None, '', 'No job ID provided', gr.update(interactive=True), gr.update(interactive=True)
+        yield None, None, None, '', 'No job ID provided', gr.update(interactive=True), gr.update(interactive=True), None
         return
 
     last_video = None  # Track the last video file shown
@@ -1284,19 +1295,19 @@ def monitor_job(job_id):
     while True:
         job = job_queue.get_job(job_id)
         if not job:
-            yield None, job_id, None, '', 'Job not found', gr.update(interactive=True), gr.update(interactive=True)
+            yield None, job_id, None, '', 'Job not found', gr.update(interactive=True), gr.update(interactive=True), None
             return
 
         # If a new video file is available, yield it immediately
         if job.result and job.result != last_video:
             last_video = job.result
             # You can also update preview/progress here if desired
-            yield last_video, job_id, gr.update(visible=True), '', '', gr.update(interactive=True), gr.update(interactive=True)
+            yield last_video, job_id, gr.update(visible=True), '', '', gr.update(interactive=True), gr.update(interactive=True), None
 
         # Handle job status and progress
         if job.status == JobStatus.PENDING:
             position = job_queue.get_queue_position(job_id)
-            yield last_video, job_id, gr.update(visible=True), '', f'Waiting in queue. Position: {position}', gr.update(interactive=True), gr.update(interactive=True)
+            yield last_video, job_id, gr.update(visible=True), '', f'Waiting in queue. Position: {position}', gr.update(interactive=True), gr.update(interactive=True), None
 
         elif job.status == JobStatus.RUNNING:
             # Only reset the cancel button when a job transitions from another state to RUNNING
@@ -1310,23 +1321,23 @@ def monitor_job(job_id):
                 preview = job.progress_data.get('preview')
                 desc = job.progress_data.get('desc', '')
                 html = job.progress_data.get('html', '')
-                yield last_video, job_id, gr.update(visible=True, value=preview), desc, html, gr.update(interactive=True), button_update
+                yield last_video, job_id, gr.update(visible=True, value=preview), desc, html, gr.update(interactive=True), button_update, None
             else:
-                yield last_video, job_id, gr.update(visible=True), '', 'Processing...', gr.update(interactive=True), button_update
+                yield last_video, job_id, gr.update(visible=True), '', 'Processing...', gr.update(interactive=True), button_update, None
 
         elif job.status == JobStatus.COMPLETED:
             # Show the final video and reset the button text
-            yield last_video, job_id, gr.update(visible=True), '', '', gr.update(interactive=True), gr.update(interactive=True, value="Cancel Current Job")
+            yield last_video, job_id, gr.update(visible=True), '', '', gr.update(interactive=True), gr.update(interactive=True, value="Cancel Current Job"), job.last_frame_image
             break
 
         elif job.status == JobStatus.FAILED:
             # Show error and reset the button text
-            yield last_video, job_id, gr.update(visible=True), '', f'Error: {job.error}', gr.update(interactive=True), gr.update(interactive=True, value="Cancel Current Job")
+            yield last_video, job_id, gr.update(visible=True), '', f'Error: {job.error}', gr.update(interactive=True), gr.update(interactive=True, value="Cancel Current Job"), None
             break
 
         elif job.status == JobStatus.CANCELLED:
             # Show cancelled message and reset the button text
-            yield last_video, job_id, gr.update(visible=True), '', 'Job cancelled', gr.update(interactive=True), gr.update(interactive=True, value="Cancel Current Job")
+            yield last_video, job_id, gr.update(visible=True), '', 'Job cancelled', gr.update(interactive=True), gr.update(interactive=True, value="Cancel Current Job"), None
             break
 
         # Update last_job_status for the next iteration
@@ -1356,5 +1367,6 @@ interface.launch(
     server_name=args.server,
     server_port=args.port,
     share=args.share,
-    inbrowser=args.inbrowser
+    inbrowser=args.inbrowser,
+    allowed_paths=[settings.get("output_dir"), settings.get("metadata_dir")],
 )

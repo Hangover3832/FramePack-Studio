@@ -5,6 +5,7 @@ loras/
 input_files/
 queue.json
 settings.json
+test*
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
